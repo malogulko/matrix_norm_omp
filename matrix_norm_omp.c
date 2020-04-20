@@ -8,40 +8,28 @@
 #include <omp.h>
 #include "utils.c"
 
-struct rowSumPartitionReq {
-    double *matrix_a;
-    double *matrix_b;
-    double *row_sum_vector;
-    double *inf_norm;
-    omp_lock_t *mutex_inf_norm;
-    int size;
-    int partition_num; // partition number (0..1,2,n)
-    int partition_rows; // number of rows in the partition
-};
-
-void *ijk_row_sum_partition(void *input) {
-    struct rowSumPartitionReq *info = (struct rowSumPartitionReq *) input;
-    int partition_start = info->partition_num * info->partition_rows;
-    int next_partition_start = (info->partition_num + 1) * info->partition_rows;
+double ijk_row_sum_partition(double *matrix_a,
+                             double *matrix_b,
+                             double *row_sum_vector,
+                             int partition_num,
+                             int partition_size,
+                             int matrix_size) {
+    int partition_start = partition_num * partition_size;
+    int next_partition_start = (partition_num + 1) * partition_size;
     double local_max_sum = 0;
     for (int i = partition_start; i < next_partition_start; i++) {
         double row_sum = 0;
-        for (int j = 0; j < info->size; j++) {
-            for (int k = 0; k < info->size; k++) {
-                row_sum += *(info->matrix_a + i * info->size + k) * *(info->matrix_b + j * info->size + k);
+        for (int j = 0; j < matrix_size; j++) {
+            for (int k = 0; k < matrix_size; k++) {
+                row_sum += *(matrix_a + i * matrix_size + k) * *(matrix_b + j * matrix_size + k);
             }
         }
-        *(info->row_sum_vector + i) = row_sum;
+        *(row_sum_vector + i) = row_sum;
         if (local_max_sum < row_sum) {
             local_max_sum = row_sum;
         }
     }
-    omp_set_lock(info->mutex_inf_norm);
-    if (local_max_sum > *info->inf_norm) {
-        *info->inf_norm = local_max_sum;
-    }
-    omp_unset_lock(info->mutex_inf_norm);
-    return NULL;
+    return local_max_sum;
 }
 
 void ijk_row_sum_partitioned(double *matrix_a,
@@ -52,34 +40,17 @@ void ijk_row_sum_partitioned(double *matrix_a,
                              int num_partitions) {
     check_partition(matrix_size, num_partitions);
     int partition_size = matrix_size / num_partitions;
-
-    struct rowSumPartitionReq *reqs = malloc(num_partitions * sizeof(*reqs));
-
-    omp_lock_t *mutex_inf_norm = malloc(sizeof(omp_lock_t));
-    omp_init_lock(mutex_inf_norm);
-
+    omp_set_num_threads(num_partitions);
+    double inf_norm_val = 0.;
+#pragma omp parallel for reduction (max: inf_norm_val)
     for (int p_num = 0; p_num < num_partitions; p_num++) {
-        struct rowSumPartitionReq req = {
-                .matrix_a = matrix_a,
-                .matrix_b = matrix_b,
-                .row_sum_vector = row_sum_vector,
-                .inf_norm = inf_norm,
-                .mutex_inf_norm = mutex_inf_norm,
-                .size = matrix_size,
-                .partition_num = p_num,
-                .partition_rows = partition_size
-        };
-        *(reqs + sizeof(*reqs) * p_num) = req;
+        inf_norm_val = ijk_row_sum_partition(matrix_a, matrix_b, row_sum_vector, p_num, partition_size, matrix_size);
+        //printf("thread id = %d and p_num = %d inf_norm_val = %f\n", omp_get_thread_num(), p_num, inf_norm_val);
     }
 
-    #pragma omp parallel for
-    for (int p_num = 0; p_num < num_partitions; p_num++) {
-        ijk_row_sum_partition(reqs + sizeof(*reqs) * p_num);
-    }
-
-    omp_destroy_lock(mutex_inf_norm);
-    free(mutex_inf_norm);
+    *inf_norm = inf_norm_val;
 }
+
 /**
  * 4x4 matrix represented in memory as:
  *
@@ -113,11 +84,11 @@ int main(int argc, char *argv[]) {
     struct matrixInfo matrix_a_info = {.size = size, .mxPtr = matrix_a};
     struct matrixInfo matrix_b_info = {.size = size, .mxPtr = matrix_b};
     struct matrixInfo *matrices_to_randomize = malloc(2 * sizeof(*matrices_to_randomize));
-    
+
     *matrices_to_randomize = matrix_a_info;
     *(matrices_to_randomize + sizeof(*matrices_to_randomize)) = matrix_b_info;
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (int i = 0; i < 2; ++i) {
         random_matrix(matrices_to_randomize + i * sizeof(*matrices_to_randomize));
     }
