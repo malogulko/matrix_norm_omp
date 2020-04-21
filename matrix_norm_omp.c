@@ -79,16 +79,16 @@ int main(int argc, char *argv[]) {
     // Initialize info objs
     struct matrixInfo matrix_a_info = {.size = size, .mxPtr = matrix_a};
     struct matrixInfo matrix_b_info = {.size = size, .mxPtr = matrix_b};
-    struct matrixInfo *matrices_to_randomize = malloc(sizeof(matrix_a_info) + sizeof(matrix_b_info));
-    *matrices_to_randomize = matrix_a_info;
-    *(matrices_to_randomize + sizeof(matrix_a_info)) = matrix_b_info;
+    struct matrixInfo *matrices_to_randomize[2];
+    matrices_to_randomize[0] = &matrix_a_info;
+    matrices_to_randomize[1] = &matrix_b_info;
 
     omp_set_num_threads(num_partitions);
 
 #pragma omp parallel for
     for (int i = 0; i < 2; ++i) {
         // printf("thread id = %d, filling matrix %d\n", omp_get_thread_num(), i);
-        random_matrix(matrices_to_randomize + i * sizeof(matrix_a_info));
+        random_matrix(matrices_to_randomize[i]);
     }
 
     //printf("Filled matrices\n");
@@ -102,6 +102,5 @@ int main(int argc, char *argv[]) {
     free(matrix_a);
     free(matrix_b);
     free(inf_norm);
-    free(matrices_to_randomize);
     return 0;
 }
